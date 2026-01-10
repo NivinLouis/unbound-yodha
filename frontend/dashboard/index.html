@@ -1,0 +1,759 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Meera's Yodha | ICU Neuro-Monitor</title>
+    
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <style>
+        :root {
+            --bg-color: #050505;
+            --card-bg: #121212;
+            --border-color: #333;
+            --neon-green: #00ff41;
+            --neon-yellow: #ffff00; /* Bright Neon Yellow */
+            --neon-red: #ff003c;
+            --neon-blue: #00f3ff;
+            --neon-purple: #bc13fe;
+            --text-main: #e0e0e0;
+            --text-dim: #888;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            font-family: 'Segoe UI', 'Roboto', Helvetica, Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            overflow: hidden;
+            transition: background-color 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        /* --- CRITICAL ALERT BLINK ANIMATION --- */
+        @keyframes full-screen-alert {
+            0% { box-shadow: inset 0 0 0 0 rgba(255, 0, 60, 0); border-color: transparent; }
+            50% { box-shadow: inset 0 0 100px 20px rgba(255, 0, 60, 0.4); border-color: var(--neon-red); }
+            100% { box-shadow: inset 0 0 0 0 rgba(255, 0, 60, 0); border-color: transparent; }
+        }
+
+        .alert-mode {
+            animation: full-screen-alert 1s infinite ease-in-out;
+            border: 5px solid transparent;
+            height: 95vh;
+            box-sizing: border-box;
+        }
+
+        /* --- FLATLINE (STEADY RED HIGH ALERT) --- */
+        .flatline-mode {
+            background-color: #4a0000 !important; /* Brighter Blood Red */
+            box-shadow: inset 0 0 200px 50px rgba(255, 0, 0, 0.8) !important;
+            border: 15px solid #ff0000 !important;
+            height: 95vh;
+            box-sizing: border-box;
+        }
+
+        /* UTILITIES */
+        .blink { animation: blinker 1.5s linear infinite; }
+        @keyframes blinker { 50% { opacity: 0; } }
+        
+        .pulse-border-red { border: 1px solid var(--neon-red) !important; box-shadow: 0 0 15px var(--neon-red); }
+
+        .text-green { color: var(--neon-green); }
+        .text-yellow { color: var(--neon-yellow); }
+        .text-red { color: var(--neon-red); }
+
+        /* LAYOUT GRID */
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: 350px 1fr 300px;
+            grid-template-rows: 80px 1fr 250px;
+            gap: 15px;
+            height: 90vh;
+        }
+
+        /* HEADER */
+        .header {
+            grid-column: 1 / -1;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid var(--border-color);
+            padding: 0 10px;
+            background: #0a0a0a;
+            border-radius: 8px;
+        }
+        .clock { font-size: 1.8em; font-weight: bold; font-family: 'Courier New', monospace; }
+        .status-dot { height: 12px; width: 12px; background-color: #333; border-radius: 50%; display: inline-block; margin-right: 5px; }
+        .status-connected { background-color: var(--neon-green); box-shadow: 0 0 8px var(--neon-green); }
+
+        /* PATIENT DETAILS IN HEADER */
+        .patient-info {
+            display: flex;
+            gap: 20px;
+            align-items: center;
+        }
+        .info-block {
+            border-left: 1px solid #333;
+            padding-left: 15px;
+        }
+        .info-label { font-size: 0.75em; color: #666; display: block; text-transform: uppercase; letter-spacing: 0.5px; }
+        .info-value { font-size: 1.1em; font-weight: bold; color: white; }
+        .diagnosis { color: var(--neon-yellow); }
+
+        /* CARDS */
+        .card {
+            background-color: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 15px;
+            position: relative;
+            display: flex;
+            flex-direction: column;
+        }
+        .card-title { font-size: 0.9em; text-transform: uppercase; letter-spacing: 1px; color: var(--text-dim); margin-bottom: 10px; }
+
+        /* VIDEO FEED */
+        .video-container {
+            position: relative;
+            height: 240px; 
+            background: #000;
+            border-radius: 4px;
+            overflow: hidden;
+            border: 1px solid #444;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 15px;
+        }
+        
+        #video-feed { width: 100%; height: 100%; object-fit: cover; }
+        
+        .overlay-box {
+            position: absolute; top: 10px; left: 10px;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 0.85em;
+            color: var(--text-main);
+            border-left: 3px solid var(--neon-green);
+        }
+        .overlay-item { margin-bottom: 4px; display: flex; align-items: center; gap: 8px; }
+        
+        .privacy-blur {
+            position: absolute; top: 20%; left: 30%; width: 40%; height: 30%;
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(15px);
+            border: 1px dashed rgba(255,255,255,0.5);
+            display: flex; align-items: center; justify-content: center;
+            color: white; font-weight: bold; font-size: 0.8em;
+        }
+        .fall-alert {
+            position: absolute; bottom: 10px; left: 0; right: 0;
+            background: var(--neon-red); color: white;
+            text-align: center; font-weight: bold; padding: 5px;
+            display: none;
+        }
+
+        /* MEDICATION & IMPACT */
+        .info-panel {
+            background: #1a1a1a;
+            border-left: 2px solid var(--neon-blue);
+            padding: 10px;
+            margin-bottom: 10px;
+            border-radius: 0 4px 4px 0;
+        }
+        .med-row { display: flex; justify-content: space-between; font-size: 0.9em; margin-bottom: 5px; }
+        .med-label { color: #888; }
+        .med-val { color: var(--neon-blue); font-weight: bold; }
+
+        .impact-box {
+            background: rgba(188, 19, 254, 0.1);
+            border: 1px solid var(--neon-purple);
+            padding: 8px;
+            border-radius: 4px;
+            margin-top: 5px;
+            font-size: 0.85em;
+        }
+        .impact-title { color: var(--neon-purple); font-weight: bold; margin-bottom: 3px; display: block; }
+        .impact-text { color: #ddd; font-style: italic; }
+
+        .incident-list {
+            max-height: 100px;
+            overflow-y: auto;
+        }
+        .incident-item {
+            font-size: 0.85em;
+            padding: 5px;
+            border-bottom: 1px solid #333;
+            display: flex;
+            gap: 10px;
+        }
+        .inc-time { color: var(--neon-yellow); font-family: 'Courier New', monospace; }
+        .inc-desc { color: #eee; }
+
+        /* HERO GAUGE */
+        .gauge-wrapper {
+            display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%;
+        }
+        .gauge-container { position: relative; width: 300px; height: 150px; overflow: hidden; }
+        
+        /* GAUGE GRADIENT LOGIC (180 Degree Arch):
+           Start angle: from 270deg (Left/West)
+           0 - 54deg (Risk 0-30%) -> Green
+           54 - 108deg (Risk 30-60%) -> Yellow
+           108 - 180deg (Risk 60-100%) -> Red
+        */
+        .gauge-arc {
+            width: 300px; height: 300px; border-radius: 50%;
+            background: conic-gradient(from 270deg at 50% 50%, 
+                var(--neon-green) 0deg 54deg,    
+                var(--neon-yellow) 54deg 108deg,
+                var(--neon-red) 108deg 180deg,  
+                transparent 180deg);
+            mask: radial-gradient(circle at 50% 50%, transparent 60%, black 61%);
+            -webkit-mask: radial-gradient(circle at 50% 50%, transparent 60%, black 61%);
+        }
+        .gauge-needle {
+            position: absolute; bottom: 0; left: 50%;
+            width: 4px; height: 140px; background: white;
+            transform-origin: bottom center; transform: rotate(-90deg);
+            transition: transform 0.5s cubic-bezier(0.4, 0.0, 0.2, 1);
+            border-radius: 4px; z-index: 10;
+        }
+        .gauge-value { font-size: 4em; font-weight: bold; margin-top: -40px; z-index: 11; text-shadow: 0 0 20px rgba(255,255,255,0.2); }
+        .risk-label { font-size: 1.5em; letter-spacing: 2px; text-transform: uppercase; margin-top: 10px; }
+        
+        .intervention-banner {
+            margin-top: 20px;
+            background-color: rgba(255, 0, 60, 0.2);
+            border: 1px solid var(--neon-red);
+            color: var(--neon-red);
+            padding: 10px 20px;
+            border-radius: 50px;
+            display: flex; align-items: center; gap: 10px;
+            opacity: 0; transition: opacity 0.3s;
+        }
+
+        /* VITALS & ENV */
+        .metric-row { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 15px; border-bottom: 1px solid #222; padding-bottom: 5px; }
+        .metric-val { font-size: 2em; font-family: 'Courier New', monospace; font-weight: bold; }
+        .metric-unit { font-size: 0.8em; color: #666; }
+        .icon { font-size: 1.5em; margin-right: 10px; }
+
+        /* LOGS & GRAPH */
+        .logs-container { font-family: 'Courier New', monospace; font-size: 0.85em; color: var(--neon-green); overflow-y: auto; height: 100%; }
+        .log-entry { margin-bottom: 5px; border-bottom: 1px solid #222; padding: 2px 0; }
+
+        /* Demo Button */
+        .demo-btn { position: fixed; top: 10px; right: 10px; background: #333; color: white; border: none; padding: 5px 10px; cursor: pointer; z-index: 1000; border-radius: 4px; font-size: 0.7em;}
+        .demo-btn:hover { background: #555; }
+    </style>
+</head>
+<body id="main-body">
+
+    <button class="demo-btn" onclick="toggleSimulation()">Toggle Demo Mode</button>
+
+    <div class="dashboard-grid">
+        
+        <div class="header">
+            <div class="patient-info">
+                <h2>🏥 YODHA</h2>
+                
+                <div class="info-block">
+                    <span class="info-label">Patient ID</span>
+                    <span class="info-value" id="pat-id">ICU-04</span>
+                </div>
+                
+                <div class="info-block">
+                    <span class="info-label">Patient Name</span>
+                    <span class="info-value" id="pat-name">Alex Doe</span>
+                </div>
+
+                <div class="info-block">
+                    <span class="info-label">Admitted On</span>
+                    <span class="info-value" id="pat-admit">2026-01-02</span>
+                </div>
+
+                <div class="info-block">
+                    <span class="info-label">Diagnosis</span>
+                    <span class="info-value diagnosis" id="pat-diagnosis">Traumatic Brain Injury (TBI)</span>
+                </div>
+            </div>
+            
+            <div style="text-align: right;">
+                <span id="clock" class="clock">00:00:00</span>
+                <div style="font-size: 0.8em; margin-top: 5px;">
+                    <span id="conn-dot" class="status-dot"></span> 
+                    <span id="conn-text">Connecting...</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="card" id="vision-card" style="grid-row: 2 / span 2;">
+            <div class="card-title">Computer Vision Feed (Live)</div>
+            
+            <div class="video-container">
+                <img id="video-feed" src="https://via.placeholder.com/640x480/000000/333333?text=Waiting+for+Signal..." alt="Live Feed">
+                
+                <div class="overlay-box">
+                    <div class="overlay-item">
+                        POSTURE: <span id="val-posture" style="color:white; font-weight:bold;">Supine</span>
+                    </div>
+                    <div class="overlay-item">
+                        EYES: 
+                        <span id="eye-icon" style="font-size: 1.2em;">👁️</span> 
+                        <span id="val-eyes" style="color: var(--neon-green); font-weight:bold;">OPEN</span>
+                    </div>
+                    <div class="overlay-item">
+                        AGITATION: <span id="val-agitated" style="color:#888;">None</span>
+                    </div>
+                </div>
+
+                <div id="privacy-overlay" class="privacy-blur" style="display: none;">
+                    [ PRIVACY BLUR ACTIVE ]
+                </div>
+
+                <div id="fall-overlay" class="fall-alert blink">
+                    ⚠️ FALL RISK DETECTED
+                </div>
+            </div>
+            
+            <div class="card-title" style="margin-top: 10px;">💊 Active Medication</div>
+            <div class="info-panel">
+                <div class="med-row">
+                    <span class="med-label">Drug:</span>
+                    <span class="med-val" id="val-med-name">Dexmedetomidine</span>
+                </div>
+                <div class="med-row">
+                    <span class="med-label">Dosage:</span>
+                    <span class="med-val" id="val-med-dose">0.5 mcg/kg/hr</span>
+                </div>
+                
+                <div class="impact-box">
+                    <span class="impact-title">⚡ Physiological Impact</span>
+                    <span class="impact-text" id="val-med-impact">Maintains light sedation; minimal respiratory depression.</span>
+                </div>
+            </div>
+
+            <div class="card-title" style="margin-top: 10px;">⚠️ Recent Incidents</div>
+            <div id="incident-list" class="incident-list">
+                <div class="incident-item">
+                    <span class="inc-time">--:--</span>
+                    <span class="inc-desc">No incidents recorded.</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="card" id="main-card" style="grid-row: 2 / 3;">
+            <div class="card-title" style="text-align: center;">Neuro-Psychosis Risk Analysis</div>
+            
+            <div class="gauge-wrapper">
+                <div class="gauge-container">
+                    <div class="gauge-arc"></div>
+                    <div class="gauge-needle" id="gauge-needle"></div>
+                </div>
+                <div class="gauge-value" id="risk-score">--</div>
+                
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    <div class="risk-label" id="risk-text">STANDBY</div>
+                    <div id="audio-icon" style="font-size: 1.5em; display: none;">🔊</div>
+                </div>
+
+                <div id="intervention-banner" class="intervention-banner">
+                    <span class="blink">🔊</span>
+                    <span>AUTO-INTERVENTION: PLAYING AUDIO</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="card" style="grid-row: 2 / 3;">
+            <div class="card-title">Patient Vitals</div>
+            
+            <div class="metric-row">
+                <div><span class="icon">❤️</span>HR</div>
+                <div><span id="val-hr" class="metric-val text-green">--</span> <span class="metric-unit">BPM</span></div>
+            </div>
+            
+            <div class="metric-row">
+                <div><span class="icon">💧</span>SPO2</div>
+                <div><span id="val-spo2" class="metric-val text-green">--</span> <span class="metric-unit">%</span></div>
+            </div>
+
+            <div class="metric-row" style="border-bottom: none;">
+                <div><span class="icon">🛌</span>Bed Mvt</div>
+                <div><span id="val-bed" class="metric-val">--</span> <span class="metric-unit">IDX</span></div>
+            </div>
+
+            <hr style="border-color: #333; margin: 10px 0;">
+            <div class="card-title">Environment</div>
+
+            <div class="metric-row">
+                <div><span class="icon">🔊</span>Noise</div>
+                <div><span id="val-noise" class="metric-val">--</span> <span class="metric-unit">dB</span></div>
+            </div>
+
+            <div class="metric-row" style="border-bottom: none;">
+                <div><span class="icon">💡</span>Light</div>
+                <div><span id="val-light" class="metric-val">--</span> <span class="metric-unit">Lux</span></div>
+            </div>
+        </div>
+
+        <div class="card" style="grid-column: 2 / 3; grid-row: 3 / 4;">
+            <div class="card-title">Sleep Architecture (Hypnogram)</div>
+            <div style="position: relative; height: 100%; width: 100%;">
+                <canvas id="sleepChart"></canvas>
+            </div>
+        </div>
+
+        <div class="card" style="grid-column: 3 / 4; grid-row: 3 / 4;">
+            <div class="card-title">> System Terminal</div>
+            <div id="log-terminal" class="logs-container">
+                <div class="log-entry">System Initialized...</div>
+                <div class="log-entry">Waiting for Nivin's Data Stream...</div>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        // CONFIG
+        const SERVER_URL = 'http://172.16.17.193:5000'; 
+        let socket;
+        let isSimulationMode = false;
+        let simulationInterval;
+        const bodyElement = document.getElementById('main-body');
+
+        // ==========================================
+        // 🔊 AUDIO SYSTEM
+        // ==========================================
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        let lastBeepTime = 0;
+
+        function playAudioFeedback(type) {
+            // Rate limit check
+            const now = Date.now();
+            if (now - lastBeepTime < 1000) return;
+            lastBeepTime = now;
+
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+
+            const osc = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+
+            osc.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            const time = audioCtx.currentTime;
+
+            if (type === 'WARNING') {
+                // Gentle Blip (30-60)
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(440, time);
+                osc.frequency.exponentialRampToValueAtTime(400, time + 0.1); 
+                gainNode.gain.setValueAtTime(0.05, time); 
+                gainNode.gain.exponentialRampToValueAtTime(0.001, time + 0.15);
+                osc.start(time);
+                osc.stop(time + 0.15);
+
+            } else if (type === 'CRITICAL') {
+                // Harsh Alarm (>60)
+                osc.type = 'square';
+                osc.frequency.setValueAtTime(880, time);
+                osc.frequency.setValueAtTime(500, time + 0.1); 
+                gainNode.gain.setValueAtTime(0.15, time);
+                gainNode.gain.exponentialRampToValueAtTime(0.001, time + 0.4);
+                osc.start(time);
+                osc.stop(time + 0.4);
+            
+            } else if (type === 'FLATLINE') {
+                // === LOUD EMERGENCY ALERT (Heart Rate = 0) ===
+                osc.type = 'sawtooth'; 
+                osc.frequency.setValueAtTime(1000, time); // High pitched constant tone
+                
+                // Volume INCREASED (0.5 is very loud for sawtooth)
+                gainNode.gain.setValueAtTime(0.5, time);
+                
+                // Play for 1.8 seconds (continuous feel)
+                osc.start(time);
+                osc.stop(time + 1.8);
+            }
+        }
+
+        function ensureAudioContext() {
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+        }
+
+        // Clock
+        setInterval(() => {
+            document.getElementById('clock').innerText = new Date().toLocaleTimeString('en-GB');
+        }, 1000);
+
+        // Chart Setup
+        const ctx = document.getElementById('sleepChart').getContext('2d');
+        const sleepChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                // Initialize with empty strings for the time labels
+                labels: Array(20).fill(''),
+                datasets: [{
+                    label: 'Sleep Depth',
+                    data: Array(20).fill(1),
+                    borderColor: '#00ff41',
+                    backgroundColor: 'rgba(0, 255, 65, 0.1)',
+                    fill: true,
+                    tension: 0.4,
+                    pointRadius: 0
+                }]
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                scales: {
+                    y: { beginAtZero: true, max: 3, grid: { color: '#222' }, ticks: { color: '#666', callback: v => ['DEEP','REM','LIGHT','AWAKE'][v] || '' } },
+                    // Enabled X-Axis to show time stamps
+                    x: { 
+                        display: true, 
+                        grid: { color: '#222' },
+                        ticks: { color: '#666', maxRotation: 0, autoSkip: true } 
+                    }
+                },
+                plugins: { legend: { display: false } }
+            }
+        });
+
+        // ==========================================
+        // UPDATE DASHBOARD
+        // ==========================================
+        function updateDashboard(data) {
+            // Patient Info
+            document.getElementById('pat-id').innerText = data.patient.id;
+            document.getElementById('pat-name').innerText = data.patient.name;
+            if(data.patient.admission_date) document.getElementById('pat-admit').innerText = data.patient.admission_date;
+            if(data.patient.diagnosis) document.getElementById('pat-diagnosis').innerText = data.patient.diagnosis;
+
+            // Vitals
+            const hr = data.vitals.heart_rate; // Store HR
+            document.getElementById('val-hr').innerText = hr;
+            document.getElementById('val-spo2').innerText = data.vitals.spo2;
+            document.getElementById('val-bed').innerText = data.vitals.bed_pressure_index;
+
+            // Environment
+            const noiseEl = document.getElementById('val-noise');
+            noiseEl.innerText = data.environment.noise_level_db;
+            noiseEl.style.color = data.environment.noise_level_db > 70 ? "var(--neon-amber)" : "var(--text-main)";
+            document.getElementById('val-light').innerText = data.environment.light_lux;
+
+            // Behavior
+            document.getElementById('val-posture').innerText = data.behavior.posture;
+            const eyesStatus = data.behavior.eyes_status || "OPEN"; 
+            const eyesEl = document.getElementById('val-eyes');
+            const eyesIcon = document.getElementById('eye-icon');
+            eyesEl.innerText = eyesStatus;
+            
+            if(eyesStatus === "OPEN") {
+                eyesEl.style.color = "var(--neon-green)";
+                eyesIcon.innerText = "👁️"; eyesIcon.style.opacity = "1";
+            } else {
+                eyesEl.style.color = "#888";
+                eyesIcon.innerText = "😴"; eyesIcon.style.opacity = "0.7";
+            }
+
+            const agiEl = document.getElementById('val-agitated');
+            agiEl.innerText = data.behavior.is_agitated ? "DETECTED" : "None";
+            agiEl.style.color = data.behavior.is_agitated ? "var(--neon-red)" : "#888";
+
+            // Overlays
+            document.getElementById('fall-overlay').style.display = data.behavior.fall_risk ? 'block' : 'none';
+            const vid = document.getElementById('video-feed');
+            if(data.behavior.privacy_mode) {
+                document.getElementById('privacy-overlay').style.display = 'flex';
+                vid.style.filter = "blur(10px)";
+            } else {
+                document.getElementById('privacy-overlay').style.display = 'none';
+                vid.style.filter = "none";
+            }
+
+            // Medication & Incidents
+            if(data.patient.medication) {
+                document.getElementById('val-med-name').innerText = data.patient.medication.name || "Dexmedetomidine";
+                document.getElementById('val-med-dose').innerText = data.patient.medication.dose || "0.5 mcg/kg/hr";
+                document.getElementById('val-med-impact').innerText = data.patient.medication.impact || "Stable sedation.";
+            }
+            if(data.patient.recent_incidents && data.patient.recent_incidents.length > 0) {
+                const incList = document.getElementById('incident-list');
+                incList.innerHTML = "";
+                data.patient.recent_incidents.forEach(inc => {
+                    incList.innerHTML += `
+                        <div class="incident-item">
+                            <span class="inc-time">${inc.time}</span>
+                            <span class="inc-desc" style="color:${inc.type === 'CRITICAL' ? 'var(--neon-red)' : 'var(--neon-amber)'}">${inc.note}</span>
+                        </div>
+                    `;
+                });
+            }
+
+            // --- RISK & ALERT LOGIC ---
+            // Start with server risk score
+            let risk = data.analysis.risk_score;
+            
+            // *** CRITICAL OVERRIDE: IF HR IS 0, FORCE RISK 100 ***
+            if (hr === 0) {
+                risk = 100;
+            }
+
+            document.getElementById('risk-score').innerText = risk;
+            document.getElementById('gauge-needle').style.transform = `rotate(${(risk * 1.8) - 90}deg)`;
+
+            const riskText = document.getElementById('risk-text');
+            const mainCard = document.getElementById('main-card');
+            const banner = document.getElementById('intervention-banner');
+            const audioIcon = document.getElementById('audio-icon');
+
+            // Reset States
+            mainCard.classList.remove('pulse-border-red');
+            bodyElement.classList.remove('alert-mode'); 
+            bodyElement.classList.remove('flatline-mode'); 
+            banner.style.opacity = 0;
+            audioIcon.style.display = 'none';
+
+            // 1. CHECK FLATLINE FIRST (Priority 1)
+            if (hr === 0) {
+                riskText.innerText = "ASYSTOLE (FLATLINE)";
+                riskText.style.color = "#ff0000";
+                
+                // Keep screen RED LIGHTED (Solid Dark Red)
+                bodyElement.classList.add('flatline-mode');
+                
+                // HIGH VOLUME Continuous Sound
+                playAudioFeedback('FLATLINE');
+                
+                audioIcon.style.display = 'block';
+
+            } 
+            // 2. Normal Risk Logic
+            else if (risk < 30) {
+                riskText.innerText = "STABLE"; riskText.style.color = "var(--neon-green)";
+            } else if (risk >= 30 && risk < 60) {
+                riskText.innerText = "WARNING"; riskText.style.color = "var(--neon-yellow)";
+                playAudioFeedback('WARNING');
+            } else {
+                riskText.innerText = "CRITICAL"; riskText.style.color = "var(--neon-red)";
+                mainCard.classList.add('pulse-border-red');
+                bodyElement.classList.add('alert-mode');
+                playAudioFeedback('CRITICAL');
+                audioIcon.style.display = 'block';
+                audioIcon.classList.add('blink'); 
+            }
+
+            if(data.analysis.intervention_active || risk > 80) banner.style.opacity = 1;
+
+            // Logs
+            if (data.event_log && data.event_log.length > 0) {
+                const logBox = document.getElementById('log-terminal');
+                const entry = document.createElement('div');
+                entry.className = 'log-entry';
+                entry.innerText = data.event_log[0];
+                logBox.prepend(entry);
+            }
+
+            // --- GRAPH UPDATE (REAL-TIME) ---
+            const stages = { "Deep":0, "REM":1, "Light Sleep":2, "Awake":3 };
+            const currentStage = stages[data.analysis.current_sleep_stage] || 2;
+            
+            // Get Current Time String
+            const now = new Date();
+            const timeLabel = now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+            // Update Data Points
+            const chartData = sleepChart.data.datasets[0].data;
+            chartData.shift();
+            chartData.push(currentStage);
+
+            // Update Labels (Time)
+            const chartLabels = sleepChart.data.labels;
+            chartLabels.shift();
+            chartLabels.push(timeLabel);
+
+            sleepChart.update('none');
+        }
+
+        // SOCKET
+        try {
+            socket = io(SERVER_URL);
+            socket.on('connect', () => { 
+                document.getElementById('conn-text').innerText = "Connected"; 
+                document.getElementById('conn-dot').classList.add('status-connected'); 
+            });
+            socket.on('disconnect', () => { 
+                document.getElementById('conn-text').innerText = "Disconnected"; 
+                document.getElementById('conn-dot').classList.remove('status-connected'); 
+            });
+            socket.on('update_data', (data) => { if(!isSimulationMode) updateDashboard(data); });
+            socket.on('video_frame', (base64Data) => {
+                if(!isSimulationMode) {
+                    const videoImg = document.getElementById('video-feed');
+                    if(videoImg) videoImg.src = "data:image/jpeg;base64," + base64Data;
+                }
+            });
+        } catch (e) { console.log("Socket Error"); }
+
+        // DEMO MODE
+        function toggleSimulation() {
+            ensureAudioContext(); 
+            isSimulationMode = !isSimulationMode;
+            const btn = document.querySelector('.demo-btn');
+            
+            if(isSimulationMode) {
+                btn.innerText = "Stop Demo";
+                btn.style.background = "var(--neon-green)"; btn.style.color = "black";
+                document.getElementById('video-feed').src = "https://via.placeholder.com/640x480/000000/00FF41?text=SIMULATION+MODE";
+
+                simulationInterval = setInterval(() => {
+                    const risk = Math.floor(Math.random() * 100);
+                    const now = new Date();
+                    const timeStr = now.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+
+                    // RANDOM FLATLINE TEST (5% chance in demo)
+                    const simHr = Math.random() < 0.05 ? 0 : 60 + Math.floor(Math.random()*40);
+
+                    updateDashboard({
+                        patient: { 
+                            id: "ICU-04", 
+                            name: "Alex Doe",
+                            admission_date: "2024-10-12",
+                            diagnosis: "Post-Op Craniotomy (TBI)",
+                            medication: {
+                                name: risk > 60 ? "Propofol" : "Dexmedetomidine",
+                                dose: risk > 60 ? "2.0 mcg/kg/hr" : "0.5 mcg/kg/hr",
+                                impact: risk > 60 ? "⚠️ Inducing Deep Sedation." : "✓ Stable."
+                            },
+                            recent_incidents: []
+                        },
+                        vitals: { heart_rate: simHr, spo2: 98, bed_pressure_index: Math.floor(Math.random()*20) },
+                        environment: { noise_level_db: 40 + Math.floor(Math.random()*40), light_lux: 300 },
+                        behavior: { 
+                            posture: "Supine", 
+                            eyes_status: Math.random() > 0.5 ? "OPEN" : "CLOSED",
+                            is_agitated: risk > 75, 
+                            fall_risk: risk > 90, 
+                            privacy_mode: true 
+                        },
+                        analysis: { risk_score: risk, current_sleep_stage: risk > 50 ? "Awake" : "Light Sleep", intervention_active: risk > 80 },
+                        event_log: [`[${timeStr}] Simulation Data Packet...`]
+                    });
+                }, 2000);
+            } else {
+                btn.innerText = "Start Demo Mode";
+                btn.style.background = "#333"; btn.style.color = "white";
+                clearInterval(simulationInterval);
+                bodyElement.classList.remove('alert-mode');
+                bodyElement.classList.remove('flatline-mode');
+            }
+        }
+    </script>
+</body>
+</html>
